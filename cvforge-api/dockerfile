@@ -1,0 +1,50 @@
+# ==============================================================================
+# Etapa 1: Construcción (Build)
+# ==============================================================================
+FROM node:20-alpine AS builder
+
+WORKDIR /usr/src/app
+
+# Copiamos archivos de dependencias
+COPY package*.json ./
+
+# Instalamos todas las dependencias (incluyendo devDependencies)
+RUN npm ci
+
+# Copiamos el resto del código fuente
+COPY . .
+
+# Compilamos la aplicación de NestJS a JavaScript nativo
+RUN npm run build
+
+# Instalamos solo las dependencias de producción para ahorrar espacio
+RUN npm prune --production
+
+# ==============================================================================
+# Etapa 2: Ejecución (Runner)
+# ==============================================================================
+FROM node:20-alpine AS runner
+
+WORKDIR /usr/src/app
+
+# 1. Instalamos dependencias del sistema y descargamos el binario de Typst
+# Usamos la versión Alpine de Typst si está disponible o descargamos el binario de GitHub
+RUN apk add --no-cache curl tar xz \
+    && curl -L -o typst.tar.xz "https://github.com/typst/typst/releases/latest/download/typst-x86_64-unknown-linux-musl.tar.xz" \
+    && tar -xf typst.tar.xz --strip-components=1 -C /usr/local/bin/ \
+    && rm typst.tar.xz \
+    && apk del curl tar xz
+
+# 2. Copiamos los archivos de producción desde la etapa de compilación
+COPY --from=builder /usr/src/app/node_modules ./node_modules
+COPY --from=builder /usr/src/app/dist ./dist
+COPY --from=builder /usr/src/app/package*.json ./
+
+# 3. Exponemos el puerto de NestJS (por defecto 3000)
+EXPOSE 3000
+
+# 4. Definimos variables de entorno por defecto
+ENV NODE_ENV=production
+
+# 5. Comando de arranque de la aplicación stateless
+CMD ["node", "dist/main"]
